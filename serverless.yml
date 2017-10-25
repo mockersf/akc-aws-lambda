@@ -1,0 +1,127 @@
+service: akc-lambda-subscriber
+
+provider:
+  name: aws
+  profile: lambda
+  runtime: python3.6
+  memorySize: 128
+  environment:
+    akc_client_id: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    akc_client_secret: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    akc_dtid: dtXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    device_name: my device name
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - ${self:custom.accessTokenArn}
+    - Effect: 'Allow'
+      Action:
+        - "sns:Publish"
+      Resource:
+        - ${self:custom.deviceAndTokenArn}
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:custom.deviceAndTokenTable}"
+
+resources:
+  Resources:
+    TodosDynamoDbTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:custom.deviceAndTokenTable}
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+  authCode: auth_code
+  authCodeArn:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - ${self:custom.authCode}
+  accessToken: access_token2
+  accessTokenArn:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - ${self:custom.accessToken}
+  deviceAndToken: device_and_token
+  deviceAndTokenArn:
+    Fn::Join:
+      - ":"
+      - - arn
+        - aws
+        - sns
+        - Ref: AWS::Region
+        - Ref: AWS::AccountId
+        - ${self:custom.deviceAndToken}
+  deviceAndTokenTable: ${self:service}-${opt:stage, self:provider.stage}-devices
+
+plugins:
+  - serverless-python-requirements
+
+functions:
+  auth_redirect_akc:
+    handler: handler.auth_redirect_akc
+    events:
+      - http:
+         path: auth
+         method: get
+  auth_code:
+    handler: handler.auth_code
+    environment:
+      topic: ${self:custom.authCodeArn}
+    events:
+      - http:
+         path: auth/token
+         method: get
+  token_exchange:
+    handler: handler.token_exchange
+    environment:
+      topic: ${self:custom.accessTokenArn}
+    events:
+      - sns: ${self:custom.authCode}
+  create_device:
+    handler: handler.create_device
+    environment:
+      topic: ${self:custom.deviceAndTokenArn}
+    events:
+      - sns: ${self:custom.accessToken}
+  subscribe:
+    handler: handler.subscribe
+#    environment:
+#      callback: ${self:functions.callback}
+    events:
+      - sns: ${self:custom.deviceAndToken}
+  save_device:
+    handler: handler.save_device
+    environment:
+      table: ${self:custom.deviceAndTokenTable}
+    events:
+      - sns: ${self:custom.deviceAndToken}
